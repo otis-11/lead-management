@@ -1,0 +1,22 @@
+{
+  "name": "business-enrichment",
+  "version": "1.0.0",
+  "description": "Enrich local business list with contact info, Google ratings, and website analysis",
+  "main": "enrich.js",
+  "scripts": {
+    "enrich": "node enrich.js",
+    "server": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "cheerio": "^1.0.0-rc.12",
+    "cors": "^2.8.5",
+    "csv-parser": "^3.0.0",
+    "csv-writer": "^1.6.0",
+    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
+    "express": "^4.21.0",
+    "uuid": "^9.0.1"
+  }
+}
