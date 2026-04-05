@@ -7,15 +7,20 @@ const DECISION_TITLES = /\b(owner|founder|manager|ceo|president|principal|direct
  * @param {string} businessName
  * @returns {object} { owner_name, _notes }
  */
+let apolloDisabled = false;
+
 async function apolloOwnerSearch(businessName) {
   const apiKey = process.env.APOLLO_API_KEY;
   if (!apiKey || apiKey === 'your_key_here') {
     return { owner_name: '', _notes: 'Apollo API key not configured' };
   }
+  if (apolloDisabled) {
+    return { owner_name: '', _notes: 'Apollo: skipped (free plan)' };
+  }
 
   try {
     const resp = await axios.post(
-      'https://api.apollo.io/v1/mixed_people/search',
+      'https://api.apollo.io/api/v1/mixed_people/search',
       {
         q_organization_name: businessName,
         person_locations: ['Texas, United States'],
@@ -49,6 +54,11 @@ async function apolloOwnerSearch(businessName) {
       _notes: `Apollo: ${name}${title ? ' (' + title + ')' : ''}`,
     };
   } catch (err) {
+    if (err.response && err.response.status === 403) {
+      console.warn('[apollo] Free plan detected — disabling Apollo for remaining businesses');
+      apolloDisabled = true;
+      return { owner_name: '', _notes: 'Apollo: skipped (free plan)' };
+    }
     console.error(`[apollo] Error for "${businessName}": ${err.message}`);
     return { owner_name: '', _notes: `Apollo error: ${err.message}` };
   }

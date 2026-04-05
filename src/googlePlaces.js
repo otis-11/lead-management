@@ -3,8 +3,19 @@ const { normalizePhone, nameSimilarity } = require('./utils');
 
 const CITIES = ['Belton TX', 'Temple TX', 'Killeen TX'];
 
+const FIELD_MASK = [
+  'places.id',
+  'places.displayName',
+  'places.formattedAddress',
+  'places.websiteUri',
+  'places.rating',
+  'places.userRatingCount',
+  'places.nationalPhoneNumber',
+].join(',');
+
 /**
- * Search Google Places for a business across multiple cities and return the best match.
+ * Search Google Places (New API) for a business across multiple cities
+ * and return the best match.
  * @param {string} businessName
  * @param {string} inputPhone - original phone from CSV (may be empty)
  * @returns {object} enrichment fields or empty object
@@ -21,55 +32,41 @@ async function lookupGooglePlaces(businessName, inputPhone) {
 
   for (const city of CITIES) {
     try {
-      const query = `${businessName} ${city}`;
-      const searchResp = await axios.get(
-        'https://maps.googleapis.com/maps/api/place/textsearch/json',
+      const textQuery = `${businessName} ${city}`;
+      const searchResp = await axios.post(
+        'https://places.googleapis.com/v1/places:searchText',
+        { textQuery },
         {
-          params: { query, key: apiKey },
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': apiKey,
+            'X-Goog-FieldMask': FIELD_MASK,
+          },
           timeout: 10000,
         }
       );
 
-      const results = (searchResp.data && searchResp.data.results) || [];
-      // evaluate top 3 candidates per city
-      for (const place of results.slice(0, 3)) {
-        const placeId = place.place_id;
-        if (!placeId) continue;
-
-        // fetch details
-        const detailResp = await axios.get(
-          'https://maps.googleapis.com/maps/api/place/details/json',
-          {
-            params: {
-              place_id: placeId,
-              fields:
-                'name,formatted_address,website,rating,user_ratings_total,formatted_phone_number',
-              key: apiKey,
-            },
-            timeout: 10000,
-          }
-        );
-
-        const d = (detailResp.data && detailResp.data.result) || {};
-
-        // score candidate
-        let score = 0;
-        const detailPhone = normalizePhone(d.formatted_phone_number);
+      const places = (searchResp.data && searchResp.data.places) || [];
+      for (const place of places.slice(0, 3)) {
+        const name = (place.displayName && place.displayName.text) || '';
+        const detailPhone = normalizePhone(place.nationalPhoneNumber);
         const phoneMatch = normalizedInput && detailPhone && normalizedInput === detailPhone;
+
+        let score = 0;
         if (phoneMatch) score += 100;
-        score += nameSimilarity(businessName, d.name || '') * 50;
-        score += (d.user_ratings_total || 0) * 0.001; // tiny tiebreaker
+        score += nameSimilarity(businessName, name) * 50;
+        score += (place.userRatingCount || 0) * 0.001;
 
         if (score > bestScore) {
           bestScore = score;
           bestCandidate = {
-            address: d.formatted_address || '',
-            website_url: d.website || '',
-            google_rating: d.rating != null ? String(d.rating) : '',
-            review_count: d.user_ratings_total != null ? String(d.user_ratings_total) : '',
+            address: place.formattedAddress || '',
+            website_url: place.websiteUri || '',
+            google_rating: place.rating != null ? String(place.rating) : '',
+            review_count: place.userRatingCount != null ? String(place.userRatingCount) : '',
             _matchCity: city,
             _phoneMatch: phoneMatch,
-            _nameSim: nameSimilarity(businessName, d.name || '').toFixed(2),
+            _nameSim: nameSimilarity(businessName, name).toFixed(2),
           };
         }
       }
