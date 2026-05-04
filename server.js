@@ -14,6 +14,21 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
+// Eagerly start loading data at module init (matters on serverless cold starts).
+// Defined here so the gating middleware below can reference it before routes.
+let dataReady;
+
+// Gate every request behind dataReady so cold-start race conditions can't
+// return an empty array.
+app.use(async (req, res, next) => {
+  try {
+    if (dataReady) await dataReady;
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Serve static frontend
 app.use(express.static(path.join(__dirname, 'client', 'dist')));
 
@@ -102,8 +117,20 @@ function loadData() {
   console.log('[server] No data files found');
 }
 
+// On Vercel (and other read-only FS environments) writes will fail.
+// We catch and warn instead of crashing so the API stays up.
+const IS_READONLY_FS = !!process.env.VERCEL;
+
 function saveData() {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(businesses, null, 2), 'utf-8');
+  if (IS_READONLY_FS) {
+    console.warn('[server] Skipping saveData(): running on read-only filesystem (Vercel). Edits will not persist.');
+    return;
+  }
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(businesses, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('[server] saveData() failed:', err.message);
+  }
 }
 
 // ── API Routes ──────────────────────────────────────────
@@ -213,6 +240,11 @@ app.delete('/api/businesses/:id', (req, res) => {
 
 // POST export to CSV + XLSX
 app.post('/api/export', async (req, res) => {
+  if (IS_READONLY_FS) {
+    return res.status(501).json({
+      error: 'Export is unavailable on the deployed (serverless) site. Run the app locally to export CSV/XLSX.',
+    });
+  }
   try {
     const exportData = businesses.map(({ id, ...rest }) => rest);
     await writeOutputs(exportData);
@@ -241,14 +273,26 @@ app.get('*', (req, res) => {
 
 // ── Start ───────────────────────────────────────────────
 
+// Kick off data load now that loadData() is defined. The middleware above
+// will await this on each request.
+dataReady = Promise.resolve(loadData()).catch((err) => {
+  console.error('[server] loadData failed:', err);
+});
+
 async function start() {
-  await loadData();
+  await dataReady;
   app.listen(PORT, () => {
     console.log(`\n  Admin Dashboard API running on http://localhost:${PORT}\n`);
   });
 }
 
-start().catch((err) => {
-  console.error('Failed to start server:', err);
-  process.exit(1);
-});
+// Only auto-start the HTTP server when running locally (node server.js).
+// On Vercel (serverless), we just export the app.
+if (require.main === module && !process.env.VERCEL) {
+  start().catch((err) => {
+    console.error('Failed to start server:', err);
+    process.exit(1);
+  });
+}
+
+module.exports = app;
